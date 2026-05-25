@@ -2,7 +2,7 @@
 
 const MAX_HISTORY = 6;
 let history = []; // [{role, content}]
-let sessionTotals = { gemmaIn: 0, gemmaOut: 0, flashIn: 0, flashOut: 0, flashCost: 0 };
+let sessionTotals = { input: 0, output: 0 };
 
 // DOM Refs
 const apiUrlInput = document.getElementById("apiUrlInput");
@@ -14,27 +14,20 @@ const messagesInner = document.getElementById("messagesInner");
 const userInput = document.getElementById("userInput");
 const sendBtn = document.getElementById("sendBtn");
 
-// Panel Refs — per-model
-const gemmaIn   = document.getElementById("gemmaIn");
-const gemmaOut  = document.getElementById("gemmaOut");
-const gemmaTok  = document.getElementById("gemmaTok");
-const flashIn   = document.getElementById("flashIn");
-const flashOut  = document.getElementById("flashOut");
-const flashTok  = document.getElementById("flashTok");
-const flashCost = document.getElementById("flashCost");
-const totTok    = document.getElementById("totTok");
-const totCost   = document.getElementById("totCost");
+// Panel Refs
+const totIn = document.getElementById("totIn");
+const totOut = document.getElementById("totOut");
+const totTok = document.getElementById("totTok");
+const totCost = document.getElementById("totCost");
 const lastRequestPanel = document.getElementById("lastRequestPanel");
-const lastGemmaIn  = document.getElementById("lastGemmaIn");
-const lastGemmaOut = document.getElementById("lastGemmaOut");
-const lastFlashIn  = document.getElementById("lastFlashIn");
-const lastFlashOut = document.getElementById("lastFlashOut");
-const lastCost  = document.getElementById("lastCost");
+const lastIn = document.getElementById("lastIn");
+const lastOut = document.getElementById("lastOut");
+const lastCost = document.getElementById("lastCost");
 const intentPanel = document.getElementById("intentPanel");
-const sqlPanel    = document.getElementById("sqlPanel");
+const sqlPanel = document.getElementById("sqlPanel");
 
-const INPUT_COST_PER_M = 0.30;   // Gemini 2.5 Flash — SQL step only
-const OUTPUT_COST_PER_M = 2.50;  // Gemini 2.5 Flash — SQL step only
+const INPUT_COST_PER_M = 1.50;
+const OUTPUT_COST_PER_M = 9.00;
 
 // Init
 const examples = [
@@ -63,7 +56,7 @@ examples.forEach(ex => {
 clearChatBtn.onclick = () => {
     history = [];
     messagesInner.innerHTML = "";
-    sessionTotals = { gemmaIn: 0, gemmaOut: 0, flashIn: 0, flashOut: 0, flashCost: 0 };
+    sessionTotals = { input: 0, output: 0 };
     updateTokenUI();
     intentPanel.innerHTML = `<div class="empty-state">Ask a question to see intent analysis here</div>`;
     sqlPanel.innerHTML = `<div class="empty-state">SQL will appear here after a successful query</div>`;
@@ -132,22 +125,18 @@ async function sendMessage() {
         if (!res.ok) throw new Error(data.detail || "API Error");
 
         // Update Token Usage
+        let usage = null;
         if (mode === "intent_only") {
-            const raw = data.raw_json?._usage || {};
-            const gi = raw.promptTokenCount || 0;
-            const go = raw.candidatesTokenCount || 0;
-            updateTokens(gi, go, 0, 0, 0, 0);
+            usage = data.raw_json?._usage || {};
+            // adapt structure
+            usage = {
+                prompt_tokens: usage.promptTokenCount || 0,
+                candidates_tokens: usage.candidatesTokenCount || 0
+            };
         } else {
-            const tu = data.token_usage || {};
-            // Gemma 4 31B (free): intent + answer
-            const gi = (tu.intent_prompt_tokens  || 0) + (tu.answer_prompt_tokens || 0);
-            const go = (tu.intent_output_tokens   || 0) + (tu.answer_output_tokens || 0);
-            // Gemini 2.5 Flash (billed): SQL only
-            const fi = tu.sql_prompt_tokens  || 0;
-            const fo = tu.sql_output_tokens   || 0;
-            const fc = tu.gemini_sql_total_cost_usd || 0;
-            updateTokens(gi, go, fi, fo, fc);
+            usage = data.token_usage || { prompt_tokens: 0, candidates_tokens: 0 };
         }
+        updateTokens(usage.prompt_tokens, usage.candidates_tokens);
 
         // Update Panels and Chat
         if (mode === "intent_only") {
@@ -164,7 +153,7 @@ async function sendMessage() {
                 renderIntentPanel(data.intent_json);
                 renderSqlPanel(data);
             } else {
-                updateBotBubble(loaderId, data.final_answer || "✅ SQL query generated.", data.intent_json?.intent, false, [], "", data.follow_up_questions || []);
+                updateBotBubble(loaderId, data.final_answer || "✅ SQL query generated.", data.intent_json?.intent);
                 renderIntentPanel(data.intent_json);
                 renderSqlPanel(data);
             }
@@ -255,7 +244,7 @@ function appendBotBubble(content, intent = null) {
     return id;
 }
 
-function updateBotBubble(id, content, intent = null, isClarify = false, clarifyOptions = [], originalQuery = "", followUps = []) {
+function updateBotBubble(id, content, intent = null, isClarify = false, clarifyOptions = [], originalQuery = "") {
     const div = document.getElementById(id);
     if (div) {
         // Clear the thinking phrase interval if present
@@ -287,24 +276,6 @@ function updateBotBubble(id, content, intent = null, isClarify = false, clarifyO
             div.innerHTML = html;
         } else {
             div.innerHTML = formatBotContent(content, intent);
-
-            // Render follow-up question chips if provided
-            if (followUps && followUps.length > 0) {
-                const chipRow = document.createElement("div");
-                chipRow.className = "followup-chips-row";
-                followUps.forEach(q => {
-                    const btn = document.createElement("button");
-                    btn.className = "followup-chip";
-                    btn.textContent = q;
-                    btn.title = q;
-                    btn.onclick = () => {
-                        userInput.value = q;
-                        sendMessage();
-                    };
-                    chipRow.appendChild(btn);
-                });
-                div.appendChild(chipRow);
-            }
         }
     }
     scrollToBottom();
@@ -397,54 +368,30 @@ function renderSqlPanel(data) {
     sqlPanel.innerHTML = html;
 }
 
-function updateTokens(g_in, g_out, f_in, f_out, f_cost) {
-    sessionTotals.gemmaIn  += g_in;
-    sessionTotals.gemmaOut += g_out;
-    sessionTotals.flashIn  += f_in;
-    sessionTotals.flashOut += f_out;
-    sessionTotals.flashCost += f_cost;
+function updateTokens(p_in, p_out) {
+    sessionTotals.input += p_in;
+    sessionTotals.output += p_out;
 
-    const allTok = sessionTotals.gemmaIn + sessionTotals.gemmaOut
-                 + sessionTotals.flashIn + sessionTotals.flashOut;
-    const totC   = sessionTotals.flashCost; // only Flash is billed
+    const lastC = (p_in / 1000000 * INPUT_COST_PER_M) + (p_out / 1000000 * OUTPUT_COST_PER_M);
+    const totC = (sessionTotals.input / 1000000 * INPUT_COST_PER_M) + (sessionTotals.output / 1000000 * OUTPUT_COST_PER_M);
 
-    // Gemma section
-    gemmaIn.textContent  = sessionTotals.gemmaIn.toLocaleString();
-    gemmaOut.textContent = sessionTotals.gemmaOut.toLocaleString();
-    gemmaTok.textContent = (sessionTotals.gemmaIn + sessionTotals.gemmaOut).toLocaleString();
-
-    // Flash section
-    flashIn.textContent   = sessionTotals.flashIn.toLocaleString();
-    flashOut.textContent  = sessionTotals.flashOut.toLocaleString();
-    flashTok.textContent  = (sessionTotals.flashIn + sessionTotals.flashOut).toLocaleString();
-    flashCost.textContent = "$" + sessionTotals.flashCost.toFixed(6);
-
-    // Grand totals
-    totTok.textContent  = allTok.toLocaleString();
+    totIn.textContent = sessionTotals.input.toLocaleString();
+    totOut.textContent = sessionTotals.output.toLocaleString();
+    totTok.textContent = (sessionTotals.input + sessionTotals.output).toLocaleString();
     totCost.textContent = "$" + totC.toFixed(6);
 
-    // Last request
-    const hasActivity = g_in > 0 || g_out > 0 || f_in > 0 || f_out > 0;
-    if (hasActivity) {
+    if (p_in > 0 || p_out > 0) {
         lastRequestPanel.style.display = "block";
-        lastGemmaIn.textContent  = g_in.toLocaleString();
-        lastGemmaOut.textContent = g_out.toLocaleString();
-        lastFlashIn.textContent  = f_in.toLocaleString();
-        lastFlashOut.textContent = f_out.toLocaleString();
-        lastCost.textContent     = "$" + f_cost.toFixed(6);
+        lastIn.textContent = p_in.toLocaleString();
+        lastOut.textContent = p_out.toLocaleString();
+        lastCost.textContent = "$" + lastC.toFixed(6);
     }
 }
 
 function updateTokenUI() {
-    sessionTotals = { gemmaIn: 0, gemmaOut: 0, flashIn: 0, flashOut: 0, flashCost: 0 };
-    gemmaIn.textContent  = "0";
-    gemmaOut.textContent = "0";
-    gemmaTok.textContent = "0";
-    flashIn.textContent  = "0";
-    flashOut.textContent = "0";
-    flashTok.textContent = "0";
-    flashCost.textContent = "$0.000000";
-    totTok.textContent  = "0";
+    totIn.textContent = "0";
+    totOut.textContent = "0";
+    totTok.textContent = "0";
     totCost.textContent = "$0.000000";
     lastRequestPanel.style.display = "none";
 }

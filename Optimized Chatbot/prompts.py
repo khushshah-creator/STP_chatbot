@@ -214,77 +214,35 @@ You receive a structured intent JSON and must generate the correct SQL query.
     b) Divide the total output metric (like "[PLC]FIT101.OUTPUT") by the active pump count.
     c) Always add a WHERE active_pump_count > 0 clause to prevent division by zero.
 
-Return ONLY a complete executable PostgreSQL SELECT query.
-"""
-
-# ── Injected only when intent == "flow_analysis" ──────────────────────────
-FLOW_ANALYSIS_SQL_ADDENDUM = """
-## JSON-TO-SQL TRIGGER RULES (CRITICAL — flow_analysis intent)
+## PER-PUMP FLOW RULES (CRITICAL)
 
 Read the "User's original question" provided above carefully before writing SQL.
 
----
+### RULE 14 — PER-PUMP FLOW (MANDATORY CTE PATTERN)
 
-### TRIGGER 1 — PER-PUMP FLOW (MANDATORY CTE PATTERN)
+Activate if the user's question contains ANY of: "per pump", "each pump", "average per pump", "avg per pump", "flow per pump", "average flow per pump", "per pump flow"
 
-Activate this trigger if the user's question contains ANY of these phrases:
-  - "per pump", "each pump", "average per pump", "avg per pump",
-    "flow per pump", "average flow per pump", "per pump flow"
+⛔ FORBIDDEN: AVG("[PLC]FIT101.OUTPUT") — This averages the total, not per-pump.
 
-⛔ When this trigger is active you are FORBIDDEN from writing:
-    AVG("[PLC]FIT101.OUTPUT")   ← THIS IS WRONG. It averages the total, not per-pump.
-
-✅ You MUST use this CTE pattern instead:
+✅ MUST use this CTE pattern:
 
 WITH active_pumps AS (
-    SELECT
-        "DateAndTime",
-        "[PLC]FIT101.OUTPUT",
+    SELECT "DateAndTime", "[PLC]FIT101.OUTPUT",
         (COALESCE("[PLC]P1.ONOFF", 0) + COALESCE("[PLC]P2.ONOFF", 0) +
          COALESCE("[PLC]P3.ONOFF", 0) + COALESCE("[PLC]P4.ONOFF", 0) +
          COALESCE("[PLC]P5.ONOFF", 0) + COALESCE("[PLC]P6.ONOFF", 0)) AS total_active_pumps
-    FROM "ATL_MPS"
-    WHERE <time_filter>
+    FROM "ATL_MPS" WHERE <time_filter>
 )
--- Then in the outer SELECT divide total flow by active pump count:
 SELECT ..., ("[PLC]FIT101.OUTPUT" / total_active_pumps) AS avg_flow_per_pump
-FROM active_pumps
-WHERE total_active_pumps > 0
-...
+FROM active_pumps WHERE total_active_pumps > 0 ...
 
----
+### RULE 15 — THRESHOLD ON PER-PUMP FLOW
 
-### TRIGGER 2 — THRESHOLD ON PER-PUMP FLOW (LIST TIMESTAMPS)
+If user asks for timestamps where per-pump flow exceeds/is below a threshold, combine with Rule 14's CTE and filter: AND ("[PLC]FIT101.OUTPUT" / total_active_pumps) > <threshold>
 
-Activate this trigger if the user asks for timestamps / rows where per-pump flow
-exceeds (or is below) a numeric threshold (e.g. "above 1800", "greater than 1800").
+REMINDER: "[PLC]FIT101.OUTPUT" is the COMBINED flow of ALL running pumps. Divide by total_active_pumps for per-pump flow.
 
-✅ Combine with Trigger 1's CTE and filter in the outer WHERE:
-
-WITH active_pumps AS (
-    SELECT
-        "DateAndTime",
-        "[PLC]FIT101.OUTPUT",
-        (COALESCE("[PLC]P1.ONOFF", 0) + COALESCE("[PLC]P2.ONOFF", 0) +
-         COALESCE("[PLC]P3.ONOFF", 0) + COALESCE("[PLC]P4.ONOFF", 0) +
-         COALESCE("[PLC]P5.ONOFF", 0) + COALESCE("[PLC]P6.ONOFF", 0)) AS total_active_pumps
-    FROM "ATL_MPS"
-    WHERE "DateAndTime" >= NOW() - INTERVAL '24 hours'   -- adjust time range as needed
-)
-SELECT
-    "DateAndTime" AT TIME ZONE 'Asia/Kolkata' AS timestamp_ist,
-    "[PLC]FIT101.OUTPUT"                       AS total_flow_m3hr,
-    total_active_pumps,
-    ("[PLC]FIT101.OUTPUT" / total_active_pumps) AS avg_flow_per_pump
-FROM active_pumps
-WHERE total_active_pumps > 0
-  AND ("[PLC]FIT101.OUTPUT" / total_active_pumps) > 1800   -- replace 1800 with actual threshold
-ORDER BY "DateAndTime";
-
----
-
-REMINDER: "[PLC]FIT101.OUTPUT" is the COMBINED flow of ALL running pumps.
-Dividing by total_active_pumps gives the flow attributable to a single pump.
+Return ONLY a complete executable PostgreSQL SELECT query.
 """
 
 
@@ -295,34 +253,17 @@ You will receive:
 2. The SQL query that was executed
 3. The raw database results (JSON rows)
 
-Your job is to produce a JSON object with exactly two keys:
+Your job is to produce a clear, concise, human-readable answer to the user's question based on the data.
 
-{
-  "answer": "<your human-readable answer here>",
-  "follow_ups": ["<question 1>", "<question 2>", "<question 3>"]
-}
-
-## ANSWER GUIDELINES
+## GUIDELINES
 
 - Be direct: lead with the key number/fact, then add context.
 - Use appropriate units (kWh, m³/hr, mm, amps, volts, etc.).
-- If multiple pumps or days are present, summarise meaningfully (e.g. a small table or bullet list using markdown).
+- If multiple pumps or days are present, summarise meaningfully (e.g. a small table or bullet list).
 - Round large floats to 2 decimal places unless more precision is needed.
 - If the result set is empty, say "No data found for the requested period" and suggest the user try a broader time range.
 - If a DB error was reported, explain what went wrong in plain language and suggest how to rephrase the question.
 - Never mention SQL, database, tables, column names, or internal implementation details to the user.
 - Keep the tone professional but friendly.
 - Do NOT repeat the question back to the user — just answer it.
-
-## FOLLOW-UP QUESTION GUIDELINES
-
-- Generate exactly 3 short, specific follow-up questions the user might naturally ask NEXT based on their current query.
-- Questions must be relevant to STP monitoring (pumps, energy, flow, wet well level, SEC, power factor, etc.).
-- Vary the questions — e.g. a different time range, a related metric, or a comparison angle.
-- Keep each question under 60 characters.
-- Do NOT prefix with numbers or bullets — just the question text.
-
-## OUTPUT FORMAT
-
-Return ONLY valid raw JSON. No markdown fences. No explanation. No extra text. Just the JSON object.
 """

@@ -80,51 +80,25 @@
 
       <!-- Token Usage Panel -->
       <div class="sidebar-section">
-        <span class="sidebar-label">🪙 Token Usage &amp; Cost</span>
+        <span class="sidebar-label">🪙 Token Usage & Cost</span>
         <div class="panel-card token-card" id="tokenUsagePanel">
-
-          <!-- Gemma 4 31B — Intent + Answer (free) -->
-          <div class="token-header" style="color: var(--accent-blue);">🤖 Gemma 4 31B · Intent &amp; Answer <span style="font-size:0.7em;opacity:0.7;">(free)</span></div>
-          <div class="token-row"><span>⬆️ Input</span> <span id="gemmaIn" class="mono-val text-blue">0</span></div>
-          <div class="token-row"><span>⬇️ Output</span> <span id="gemmaOut" class="mono-val text-purple">0</span></div>
-          <div class="token-row"><span>🔢 Total</span> <span id="gemmaTok" class="mono-val font-bold">0</span></div>
-
-          <div style="border-top: 1px solid var(--border); margin: 8px 0;"></div>
-
-          <!-- Gemini 3.5 Flash — SQL only (billed) -->
-          <div class="token-header" style="color: var(--accent-green);">⚡ Gemini 3.5 Flash · SQL Gen <span style="font-size:0.7em;opacity:0.7;">(billed)</span></div>
-          <div class="token-row"><span>⬆️ Input</span> <span id="flashIn" class="mono-val text-blue">0</span></div>
-          <div class="token-row"><span>⬇️ Output</span> <span id="flashOut" class="mono-val text-purple">0</span></div>
-          <div class="token-row"><span>🔢 Total</span> <span id="flashTok" class="mono-val font-bold">0</span></div>
-          <div class="token-row token-cost"><span>💰 SQL Cost</span>
-            <span id="flashCost" class="mono-val text-green font-bold">$0.000000</span></div>
-
-          <div style="border-top: 1px solid var(--border); margin: 8px 0;"></div>
-
-          <!-- Session Grand Total -->
           <div class="token-header">SESSION TOTALS</div>
-          <div class="token-row"><span>🔢 All tokens</span>
-            <span id="totTok" class="mono-val font-bold">0</span></div>
-          <div class="token-row token-cost"><span>💰 Est. Cost</span>
-            <span id="totCost" class="mono-val text-green font-bold">$0.000000</span></div>
+          <div class="token-row"><span>⬆️ Input tokens</span> <span id="totIn" class="mono-val text-blue">0</span></div>
+          <div class="token-row"><span>⬇️ Output tokens</span> <span id="totOut" class="mono-val text-purple">0</span>
+          </div>
+          <div class="token-row"><span>🔢 Total tokens</span> <span id="totTok" class="mono-val font-bold">0</span>
+          </div>
+          <div class="token-row token-cost"><span>💰 Est. Cost</span> <span id="totCost"
+              class="mono-val text-green font-bold">$0.000000</span></div>
 
-          <!-- Last Request breakdown -->
           <div id="lastRequestPanel"
             style="display: none; margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
             <div class="token-header">LAST REQUEST</div>
-            <div class="token-row"><span>🤖 Gemma In</span>
-              <span id="lastGemmaIn" class="mono-val text-blue">0</span></div>
-            <div class="token-row"><span>🤖 Gemma Out</span>
-              <span id="lastGemmaOut" class="mono-val text-purple">0</span></div>
-            <div class="token-row"><span>⚡ Flash In</span>
-              <span id="lastFlashIn" class="mono-val text-blue">0</span></div>
-            <div class="token-row"><span>⚡ Flash Out</span>
-              <span id="lastFlashOut" class="mono-val text-purple">0</span></div>
-            <div class="token-row token-cost" style="border-top: none; padding-top: 4px;">
-              <span>💰 Cost</span>
-              <span id="lastCost" class="mono-val text-green">$0.000000</span></div>
+            <div class="token-row"><span>⬆️ Input</span> <span id="lastIn" class="mono-val text-blue">0</span></div>
+            <div class="token-row"><span>⬇️ Output</span> <span id="lastOut" class="mono-val text-purple">0</span></div>
+            <div class="token-row token-cost" style="border-top: none; padding-top: 4px;"><span>💰 Cost</span> <span
+                id="lastCost" class="mono-val text-green">$0.000000</span></div>
           </div>
-
         </div>
       </div>
 
