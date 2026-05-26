@@ -1,76 +1,96 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>STP Monitor Chatbot</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Syne:wght@400;600;800&display=swap"
-    rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Syne:wght@400;600;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
-
 <body>
   <div class="app-shell">
-    <!-- Left Sidebar: Configuration -->
+
+    <!-- Left Sidebar: Conversations -->
     <aside class="sidebar left-sidebar">
+
+      <!-- Header -->
       <div class="sidebar-header">
         <span class="logo-text">💧 STP Monitor</span>
+        <button id="newChatBtn" class="new-chat-btn" title="Start new chat">✏️ New</button>
       </div>
 
-      <div class="sidebar-section">
-        <span class="sidebar-label">⚙️ Configuration</span>
-        <div class="form-group">
-          <label>FastAPI URL</label>
-          <input type="text" id="apiUrlInput" value="http://192.168.0.19:8001" class="text-input" />
+      <!-- Conversations list (scrollable, takes main space) -->
+      <nav class="conversations-nav">
+        <div class="conv-section-label">Chats</div>
+        <div id="conversationsList" class="conversations-list">
+          <div class="conv-empty">No chats yet.<br>Start chatting!</div>
         </div>
+      </nav>
+
+      <!-- Bottom collapsible sections -->
+      <div class="sidebar-bottom-group">
+        <details class="sidebar-details" open>
+          <summary class="sidebar-details-summary">💡 Example Queries</summary>
+          <div class="sidebar-details-body">
+            <div class="chip-group" id="exampleQueries"></div>
+          </div>
+        </details>
+
+        <details class="sidebar-details" open>
+          <summary class="sidebar-details-summary">⚙️ Configuration</summary>
+          <div class="sidebar-details-body">
+            <div class="form-group">
+              <label>FastAPI URL</label>
+              <input type="text" id="apiUrlInput" value="http://192.168.0.19:8001" class="text-input" />
+            </div>
+          </div>
+        </details>
+
+        <details class="sidebar-details">
+          <summary class="sidebar-details-summary">📊 Pipeline Mode</summary>
+          <div class="sidebar-details-body">
+            <div class="radio-group">
+              <label><input type="radio" name="pipelineMode" value="full" checked> Full Pipeline (Intent → SQL)</label>
+              <label><input type="radio" name="pipelineMode" value="intent_only"> Intent Only</label>
+            </div>
+          </div>
+        </details>
       </div>
 
-      <div class="sidebar-section">
-        <span class="sidebar-label">📊 Pipeline Mode</span>
-        <div class="radio-group">
-          <label><input type="radio" name="pipelineMode" value="full" checked> Full Pipeline (Intent → SQL)</label>
-          <label><input type="radio" name="pipelineMode" value="intent_only"> Intent Only</label>
-        </div>
-      </div>
-
-      <div class="sidebar-section">
-        <span class="sidebar-label">💡 Example Queries</span>
-        <div class="chip-group" id="exampleQueries">
-          <!-- Populated by JS -->
-        </div>
-      </div>
-
-      <div class="sidebar-section" style="margin-top: auto; border-top: none;">
-        <button id="clearChatBtn" class="action-btn w-full">🗑️ Clear Chat</button>
-      </div>
     </aside>
 
     <!-- Main Chat Area -->
     <main class="chat-main">
       <header class="topbar">
         <div class="topbar-left">
-          <span class="topbar-title">STP Monitor Chatbot</span>
-          <span class="topbar-sub">Sewage Treatment Plant · Intent-Aware SQL Generator</span>
+          <span class="topbar-title" id="chatTitle">STP Monitor Chatbot</span>
+          <span class="topbar-sub" id="chatSub">Sewage Treatment Plant · Intent-Aware SQL Generator</span>
         </div>
         <div class="topbar-right">
           <span id="healthBadge" class="pill-off">● API Offline</span>
         </div>
       </header>
 
+      <!-- Banner shown when viewing a past conversation -->
+      <div id="viewingBanner" class="viewing-banner" style="display:none">
+        <span>📖 Viewing a past conversation</span>
+        <button id="returnToLiveBtn" class="return-live-btn">↩ Back to live chat</button>
+      </div>
+
       <div class="messages-wrap" id="messagesWrap">
-        <div class="messages-inner" id="messagesInner">
-          <!-- Messages will be injected here -->
-        </div>
+        <div class="messages-inner" id="messagesInner"></div>
       </div>
 
       <div class="input-area">
-        <div class="input-row">
-          <input type="text" id="userInput" class="chat-input" placeholder="Show pump 1 energy for today"
-            autocomplete="off" />
+        <!-- Normal input row -->
+        <div class="input-row" id="inputRow">
+          <input type="text" id="userInput" class="chat-input" placeholder="Show pump 1 energy for today" autocomplete="off" />
           <button id="sendBtn" class="send-btn">Send →</button>
+        </div>
+        <!-- Overlay shown when viewing past conversation -->
+        <div id="viewingOverlay" class="viewing-overlay" style="display:none">
+          <button id="returnToLiveBtn2" class="return-live-btn-full">↩ Return to your live chat to send messages</button>
         </div>
       </div>
     </main>
@@ -78,57 +98,34 @@
     <!-- Right Sidebar: Panels -->
     <aside class="sidebar right-sidebar">
 
-      <!-- Token Usage Panel -->
       <div class="sidebar-section">
         <span class="sidebar-label">🪙 Token Usage &amp; Cost</span>
         <div class="panel-card token-card" id="tokenUsagePanel">
-
-          <!-- Gemma 4 31B — Intent + Answer (free) -->
           <div class="token-header" style="color: var(--accent-blue);">🤖 Gemma 4 31B · Intent &amp; Answer <span style="font-size:0.7em;opacity:0.7;">(free)</span></div>
           <div class="token-row"><span>⬆️ Input</span> <span id="gemmaIn" class="mono-val text-blue">0</span></div>
           <div class="token-row"><span>⬇️ Output</span> <span id="gemmaOut" class="mono-val text-purple">0</span></div>
           <div class="token-row"><span>🔢 Total</span> <span id="gemmaTok" class="mono-val font-bold">0</span></div>
-
           <div style="border-top: 1px solid var(--border); margin: 8px 0;"></div>
-
-          <!-- Gemini 3.5 Flash — SQL only (billed) -->
           <div class="token-header" style="color: var(--accent-green);">⚡ Gemini 3.5 Flash · SQL Gen <span style="font-size:0.7em;opacity:0.7;">(billed)</span></div>
           <div class="token-row"><span>⬆️ Input</span> <span id="flashIn" class="mono-val text-blue">0</span></div>
           <div class="token-row"><span>⬇️ Output</span> <span id="flashOut" class="mono-val text-purple">0</span></div>
           <div class="token-row"><span>🔢 Total</span> <span id="flashTok" class="mono-val font-bold">0</span></div>
-          <div class="token-row token-cost"><span>💰 SQL Cost</span>
-            <span id="flashCost" class="mono-val text-green font-bold">$0.000000</span></div>
-
+          <div class="token-row token-cost"><span>💰 SQL Cost</span><span id="flashCost" class="mono-val text-green font-bold">$0.000000</span></div>
           <div style="border-top: 1px solid var(--border); margin: 8px 0;"></div>
-
-          <!-- Session Grand Total -->
           <div class="token-header">SESSION TOTALS</div>
-          <div class="token-row"><span>🔢 All tokens</span>
-            <span id="totTok" class="mono-val font-bold">0</span></div>
-          <div class="token-row token-cost"><span>💰 Est. Cost</span>
-            <span id="totCost" class="mono-val text-green font-bold">$0.000000</span></div>
-
-          <!-- Last Request breakdown -->
-          <div id="lastRequestPanel"
-            style="display: none; margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
+          <div class="token-row"><span>🔢 All tokens</span><span id="totTok" class="mono-val font-bold">0</span></div>
+          <div class="token-row token-cost"><span>💰 Est. Cost</span><span id="totCost" class="mono-val text-green font-bold">$0.000000</span></div>
+          <div id="lastRequestPanel" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
             <div class="token-header">LAST REQUEST</div>
-            <div class="token-row"><span>🤖 Gemma In</span>
-              <span id="lastGemmaIn" class="mono-val text-blue">0</span></div>
-            <div class="token-row"><span>🤖 Gemma Out</span>
-              <span id="lastGemmaOut" class="mono-val text-purple">0</span></div>
-            <div class="token-row"><span>⚡ Flash In</span>
-              <span id="lastFlashIn" class="mono-val text-blue">0</span></div>
-            <div class="token-row"><span>⚡ Flash Out</span>
-              <span id="lastFlashOut" class="mono-val text-purple">0</span></div>
-            <div class="token-row token-cost" style="border-top: none; padding-top: 4px;">
-              <span>💰 Cost</span>
-              <span id="lastCost" class="mono-val text-green">$0.000000</span></div>
+            <div class="token-row"><span>🤖 Gemma In</span><span id="lastGemmaIn" class="mono-val text-blue">0</span></div>
+            <div class="token-row"><span>🤖 Gemma Out</span><span id="lastGemmaOut" class="mono-val text-purple">0</span></div>
+            <div class="token-row"><span>⚡ Flash In</span><span id="lastFlashIn" class="mono-val text-blue">0</span></div>
+            <div class="token-row"><span>⚡ Flash Out</span><span id="lastFlashOut" class="mono-val text-purple">0</span></div>
+            <div class="token-row token-cost" style="border-top:none;padding-top:4px;"><span>💰 Cost</span><span id="lastCost" class="mono-val text-green">$0.000000</span></div>
           </div>
-
         </div>
       </div>
 
-      <!-- Intent Analysis Panel -->
       <div class="sidebar-section">
         <span class="sidebar-label">🧠 Intent Analysis</span>
         <div id="intentPanel" class="panel-content">
@@ -136,10 +133,9 @@
         </div>
       </div>
 
-      <!-- Generated SQL Panel -->
-      <div class="sidebar-section" style="flex: 1; display: flex; flex-direction: column;">
+      <div class="sidebar-section" style="flex:1;display:flex;flex-direction:column;">
         <span class="sidebar-label">🗄️ Generated SQL</span>
-        <div id="sqlPanel" class="panel-content" style="flex: 1; display: flex; flex-direction: column;">
+        <div id="sqlPanel" class="panel-content" style="flex:1;display:flex;flex-direction:column;">
           <div class="empty-state">SQL will appear here after a successful query</div>
         </div>
       </div>
@@ -148,11 +144,9 @@
   </div>
 
   <script>
-    // Cache-bust app.js so changes are always picked up
     const s = document.createElement('script');
     s.src = 'app.js?v=' + Date.now();
     document.body.appendChild(s);
   </script>
 </body>
-
 </html>

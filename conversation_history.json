@@ -1,0 +1,38 @@
+[
+  {
+    "user": "How many times did pump 1 start last week?",
+    "assistant": "(Could not generate answer: Gemini GEMMA API SDK error: 500 INTERNAL. {'error': {'code': 500, 'message': 'Internal error encountered.', 'status': 'INTERNAL'}})",
+    "timestamp": "26/05/2026, 12:45:29 IST",
+    "intent": "example_query",
+    "session_id": "3izi8bzac9iocst7",
+    "source_ip": "192.168.0.232",
+    "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+  },
+  {
+    "user": "How many pumps are running right now?",
+    "assistant": "There are currently 3 pumps running out of the 6 monitored pumps.",
+    "timestamp": "26/05/2026, 13:39:55 IST",
+    "intent": "example_query",
+    "session_id": "evjauy5hjtchnl0i",
+    "source_ip": "192.168.0.232",
+    "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+  },
+  {
+    "user": "which pumps are running?",
+    "assistant": "Pumps P1, P3, and P5 are currently running. Pumps P2, P4, and P6 are stopped.",
+    "timestamp": "26/05/2026, 13:44:36 IST",
+    "intent": "current_status",
+    "session_id": "evjauy5hjtchnl0i",
+    "source_ip": "192.168.0.232",
+    "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+  },
+  {
+    "user": "What is the current energy consumption?",
+    "assistant": "(Could not generate answer: Gemini GEMMA API SDK error: 500 INTERNAL. {'error': {'code': 500, 'message': 'Internal error encountered.', 'status': 'INTERNAL'}})",
+    "timestamp": "26/05/2026, 13:45:22 IST",
+    "intent": "energy_analysis",
+    "session_id": "evjauy5hjtchnl0i",
+    "source_ip": "192.168.0.232",
+    "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+  }
+]

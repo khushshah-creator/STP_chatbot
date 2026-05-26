@@ -1,12 +1,13 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Any
 import json
 import os
 import re
 import asyncio
 import hashlib
+import threading
 import redis.asyncio as aioredis
 from dotenv import load_dotenv
 import psycopg2
@@ -202,6 +203,35 @@ EXAMPLE_QUERIES_SQL = {
 }
 
 
+# ---------- Conversation History (JSON file) ----------
+
+HISTORY_FILE = os.path.join(os.path.dirname(__file__), "conversation_history.json")
+_history_lock = threading.Lock()
+
+
+def _load_history_file() -> list:
+    """Read and return the full conversation history list from disk."""
+    if not os.path.exists(HISTORY_FILE):
+        return []
+    try:
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"[History] Could not read {HISTORY_FILE}: {exc}")
+        return []
+
+
+def _save_history_file(history: list) -> None:
+    """Atomically write the history list to disk."""
+    try:
+        with _history_lock:
+            with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+                json.dump(history, f, ensure_ascii=False, indent=2, default=str)
+    except OSError as exc:
+        print(f"[History] Could not write {HISTORY_FILE}: {exc}")
+
+
 # ---------- FastAPI app ----------
 
 app = FastAPI(title="STP Chatbot API", version="1.0.0")
@@ -219,6 +249,15 @@ app.add_middleware(
 class QueryRequest(BaseModel):
     user_message: str
     conversation_history: Optional[list] = []
+
+
+class HistoryTurn(BaseModel):
+    user: str
+    assistant: str
+    timestamp: Optional[str] = None
+    intent: Optional[str] = None
+    session_id: Optional[str] = None  # caller-supplied or auto-derived from IP+UA
+    user_agent: Optional[str] = None
 
 
 class IntentResponse(BaseModel):
@@ -407,7 +446,7 @@ async def call_gemma(
     try:
         return await asyncio.get_event_loop().run_in_executor(None, _call)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Gemini API SDK error: {exc}")
+        raise HTTPException(status_code=502, detail=f"Gemini GEMMA API SDK error: {exc}")
 
 
 
@@ -784,3 +823,143 @@ async def full_pipeline(request: QueryRequest):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# ---------- Conversation History endpoints ----------
+
+@app.get("/history")
+async def get_history():
+    """Return the full persisted conversation history from conversation_history.json."""
+    history = await asyncio.get_event_loop().run_in_executor(None, _load_history_file)
+    return {"history": history, "count": len(history)}
+
+
+@app.get("/history/all")
+async def get_history_grouped():
+    """
+    Return all conversation history grouped by session_id.
+    Useful for the frontend History panel to show per-user/session conversations.
+    """
+    all_turns = await asyncio.get_event_loop().run_in_executor(None, _load_history_file)
+
+    # Group turns by session_id (fall back to 'unknown' if not set)
+    sessions: dict[str, list] = {}
+    for turn in all_turns:
+        sid = turn.get("session_id") or "unknown"
+        sessions.setdefault(sid, []).append(turn)
+
+    # Build a sorted list of session summaries (most recent first)
+    session_list = []
+    for sid, turns in sessions.items():
+        session_list.append({
+            "session_id": sid,
+            "turn_count": len(turns),
+            "first_seen": turns[0].get("timestamp", ""),
+            "last_seen": turns[-1].get("timestamp", ""),
+            "source_ip": turns[-1].get("source_ip", "unknown"),
+            "user_agent": turns[-1].get("user_agent", ""),
+            "turns": turns,
+        })
+
+    # Sort sessions: most recently active first
+    session_list.sort(key=lambda s: s["last_seen"], reverse=True)
+
+    return {
+        "total_turns": len(all_turns),
+        "total_sessions": len(session_list),
+        "sessions": session_list,
+    }
+
+
+@app.post("/history/save")
+async def save_history_turn(turn: HistoryTurn, req: Request):
+    """Append a single user/assistant turn to conversation_history.json."""
+    ist_tz = timezone(timedelta(hours=5, minutes=30))
+    timestamp = turn.timestamp or datetime.now(ist_tz).strftime("%Y-%m-%d %H:%M:%S IST")
+
+    # Derive source IP (works behind proxies too)
+    forwarded_for = req.headers.get("x-forwarded-for")
+    source_ip = forwarded_for.split(",")[0].strip() if forwarded_for else (req.client.host if req.client else "unknown")
+
+    # User-Agent from request header if not provided in body
+    user_agent = turn.user_agent or req.headers.get("user-agent", "unknown")
+
+    # Session ID: use caller-supplied value, or fingerprint from IP + UA
+    if turn.session_id:
+        session_id = turn.session_id
+    else:
+        fingerprint = f"{source_ip}|{user_agent}"
+        session_id = hashlib.md5(fingerprint.encode()).hexdigest()[:12]
+
+    new_entry = {
+        "user": turn.user,
+        "assistant": turn.assistant,
+        "timestamp": timestamp,
+        "intent": turn.intent,
+        "session_id": session_id,
+        "source_ip": source_ip,
+        "user_agent": user_agent,
+    }
+
+    def _append():
+        history = _load_history_file()
+        history.append(new_entry)
+        _save_history_file(history)
+        return len(history)
+
+    count = await asyncio.get_event_loop().run_in_executor(None, _append)
+    print(f"[History] Saved turn #{count} (session={session_id}, ip={source_ip}): '{turn.user[:60]}'")
+    return {"status": "saved", "total_turns": count, "session_id": session_id, "entry": new_entry}
+
+
+@app.get("/history/mine")
+async def get_my_history(req: Request):
+    """
+    Return conversation history for the caller's IP address only.
+    Groups turns by session_id so the frontend can render per-session chats.
+    """
+    # Resolve caller IP (same logic as /history/save)
+    forwarded_for = req.headers.get("x-forwarded-for")
+    caller_ip = forwarded_for.split(",")[0].strip() if forwarded_for else (req.client.host if req.client else "unknown")
+
+    all_turns = await asyncio.get_event_loop().run_in_executor(None, _load_history_file)
+
+    # Keep only turns from this IP
+    my_turns = [t for t in all_turns if t.get("source_ip") == caller_ip]
+
+    # Group by session_id
+    sessions: dict[str, list] = {}
+    for turn in my_turns:
+        sid = turn.get("session_id") or "unknown"
+        sessions.setdefault(sid, []).append(turn)
+
+    session_list = []
+    for sid, turns in sessions.items():
+        session_list.append({
+            "session_id": sid,
+            "turn_count": len(turns),
+            "first_seen": turns[0].get("timestamp", ""),
+            "last_seen": turns[-1].get("timestamp", ""),
+            "source_ip": caller_ip,
+            "user_agent": turns[-1].get("user_agent", ""),
+            "turns": turns,
+        })
+
+    session_list.sort(key=lambda s: s["last_seen"], reverse=True)
+
+    return {
+        "caller_ip": caller_ip,
+        "total_turns": len(my_turns),
+        "total_sessions": len(session_list),
+        "sessions": session_list,
+    }
+
+
+@app.delete("/history")
+async def clear_history():
+    """Delete all conversation history (overwrites conversation_history.json with [])."""
+    await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _save_history_file([])
+    )
+    print("[History] Cleared all conversation history.")
+    return {"status": "cleared"}
