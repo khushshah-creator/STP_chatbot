@@ -34,3 +34,5 @@ ehthumbs.db
 # Project-specific scratch/temp files
 scratch.py
 app.py
+
+conversation_history.json
