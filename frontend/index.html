@@ -1,13 +1,22 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>STP Monitor Chatbot</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Syne:wght@400;600;800&display=swap" rel="stylesheet" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Syne:wght@400;600;800&display=swap"
+    rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
+  <!-- KaTeX for LaTeX math rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.css" crossorigin="anonymous">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/contrib/auto-render.min.js" crossorigin="anonymous"
+    onload="window._katexReady = true;"></script>
 </head>
+
 <body>
   <div class="app-shell">
 
@@ -85,12 +94,14 @@
       <div class="input-area">
         <!-- Normal input row -->
         <div class="input-row" id="inputRow">
-          <input type="text" id="userInput" class="chat-input" placeholder="Show pump 1 energy for today" autocomplete="off" />
+          <input type="text" id="userInput" class="chat-input" placeholder="Show pump 1 energy for today"
+            autocomplete="off" />
           <button id="sendBtn" class="send-btn">Send →</button>
         </div>
         <!-- Overlay shown when viewing past conversation -->
         <div id="viewingOverlay" class="viewing-overlay" style="display:none">
-          <button id="returnToLiveBtn2" class="return-live-btn-full">↩ Return to your live chat to send messages</button>
+          <button id="returnToLiveBtn2" class="return-live-btn-full">↩ Return to your live chat to send
+            messages</button>
         </div>
       </div>
     </main>
@@ -101,27 +112,47 @@
       <div class="sidebar-section">
         <span class="sidebar-label">🪙 Token Usage &amp; Cost</span>
         <div class="panel-card token-card" id="tokenUsagePanel">
+
+          <!-- Gemma: Intent + Answer (free) -->
           <div class="token-header" style="color: var(--accent-blue);">🤖 Gemma 4 31B · Intent &amp; Answer <span style="font-size:0.7em;opacity:0.7;">(free)</span></div>
           <div class="token-row"><span>⬆️ Input</span> <span id="gemmaIn" class="mono-val text-blue">0</span></div>
           <div class="token-row"><span>⬇️ Output</span> <span id="gemmaOut" class="mono-val text-purple">0</span></div>
           <div class="token-row"><span>🔢 Total</span> <span id="gemmaTok" class="mono-val font-bold">0</span></div>
+
           <div style="border-top: 1px solid var(--border); margin: 8px 0;"></div>
-          <div class="token-header" style="color: var(--accent-green);">⚡ Gemini 3.5 Flash · SQL Gen <span style="font-size:0.7em;opacity:0.7;">(billed)</span></div>
+
+          <!-- SQL model section: header updated dynamically by JS -->
+          <div class="token-header" style="color: var(--accent-green);" id="sqlModelHeader">⚡ SQL Model · SQL Gen <span style="font-size:0.7em;opacity:0.7;">(billed)</span></div>
+          <!-- sql_level + pricing sub-line -->
+          <div id="sqlModelMeta" style="font-size:0.7rem;opacity:0.65;margin-bottom:6px;padding:3px 0;display:flex;gap:8px;flex-wrap:wrap;">
+            <span id="sqlLevelBadge" style="background:var(--bg-300);border-radius:4px;padding:1px 6px;">Level —</span>
+            <span id="sqlPricingLabel" style="font-family:var(--font-mono);">—</span>
+          </div>
           <div class="token-row"><span>⬆️ Input</span> <span id="flashIn" class="mono-val text-blue">0</span></div>
           <div class="token-row"><span>⬇️ Output</span> <span id="flashOut" class="mono-val text-purple">0</span></div>
           <div class="token-row"><span>🔢 Total</span> <span id="flashTok" class="mono-val font-bold">0</span></div>
           <div class="token-row token-cost"><span>💰 SQL Cost</span><span id="flashCost" class="mono-val text-green font-bold">$0.000000</span></div>
+
           <div style="border-top: 1px solid var(--border); margin: 8px 0;"></div>
           <div class="token-header">SESSION TOTALS</div>
           <div class="token-row"><span>🔢 All tokens</span><span id="totTok" class="mono-val font-bold">0</span></div>
           <div class="token-row token-cost"><span>💰 Est. Cost</span><span id="totCost" class="mono-val text-green font-bold">$0.000000</span></div>
+
+          <!-- Last Request breakdown (hidden until first request) -->
           <div id="lastRequestPanel" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
             <div class="token-header">LAST REQUEST</div>
+            <!-- model + sql_level row -->
+            <div id="lastModelRow" style="font-size:0.7rem;margin-bottom:6px;opacity:0.75;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+              <span id="lastSqlModel" style="background:var(--bg-300);border-radius:4px;padding:1px 7px;font-family:var(--font-mono);">—</span>
+              <span id="lastSqlLevel" style="background:var(--bg-300);border-radius:4px;padding:1px 6px;">Level —</span>
+            </div>
             <div class="token-row"><span>🤖 Gemma In</span><span id="lastGemmaIn" class="mono-val text-blue">0</span></div>
             <div class="token-row"><span>🤖 Gemma Out</span><span id="lastGemmaOut" class="mono-val text-purple">0</span></div>
-            <div class="token-row"><span>⚡ Flash In</span><span id="lastFlashIn" class="mono-val text-blue">0</span></div>
-            <div class="token-row"><span>⚡ Flash Out</span><span id="lastFlashOut" class="mono-val text-purple">0</span></div>
-            <div class="token-row token-cost" style="border-top:none;padding-top:4px;"><span>💰 Cost</span><span id="lastCost" class="mono-val text-green">$0.000000</span></div>
+            <div class="token-row"><span>⚡ SQL In</span><span id="lastFlashIn" class="mono-val text-blue">0</span></div>
+            <div class="token-row"><span>⚡ SQL Out</span><span id="lastFlashOut" class="mono-val text-purple">0</span></div>
+            <!-- per-model cost breakdown -->
+            <div id="lastCostBreakdown" style="font-size:0.72rem;opacity:0.7;margin:4px 0 4px 2px;font-family:var(--font-mono);"></div>
+            <div class="token-row token-cost" style="border-top:none;padding-top:4px;"><span>💰 SQL Cost</span><span id="lastCost" class="mono-val text-green">$0.000000</span></div>
           </div>
         </div>
       </div>
@@ -149,4 +180,5 @@
     document.body.appendChild(s);
   </script>
 </body>
+
 </html>

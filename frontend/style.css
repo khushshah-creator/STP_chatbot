@@ -70,6 +70,7 @@ body {
   border-right: none;
   border-left: 1px solid var(--border);
   background: var(--bg-200);
+  overflow-y: auto;
 }
 
 .sidebar-header {
@@ -1517,4 +1518,16 @@ body {
 .return-live-btn-full:hover {
   background: #fef9c3;
   border-color: #f59e0b;
+}
+/* ── KaTeX / LaTeX answer rendering ─────────────────────────── */
+.latex-answer {
+  line-height: 1.8;
+}
+.latex-answer .katex-display {
+  margin: 10px 0;
+  overflow-x: auto;
+}
+.latex-answer .katex {
+  font-size: 1.05em;
+  color: var(--text-primary, #e2e8f0);
 }

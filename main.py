@@ -35,15 +35,26 @@ DB_CONFIG = {
 # ---------- Gemini API config ----------
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Model for SQL generation only (Gemini 3.5 Flash — billed)
-GEMINI_INTENT_SQL_MODEL = os.getenv("GEMINI_SQL_MODEL", "gemini-3.5-flash")
+# Model for complex SQL (levels 3-4): more capable, higher cost
+GEMINI_COMPLEX_SQL_MODEL = os.getenv("GEMINI_COMPLEX_SQL_MODEL", "gemini-3.5-flash")
+
+# Model for simple SQL (levels 1-2): faster and cheaper
+GEMINI_SIMPLE_SQL_MODEL = os.getenv("GEMINI_SIMPLE_SQL_MODEL", "gemini-3-flash-preview")
 
 # Model for intent parsing & final answer (Gemma 4 via Gemini SDK — free)
 GEMINI_ANSWER_MODEL = "gemma-4-31b-it"
 
-# Gemini 2.5 Flash pricing (USD per 1M tokens) — SQL step only is billed
-GEMINI_FLASH_INPUT_PRICE_PER_M  = 1.5
-GEMINI_FLASH_OUTPUT_PRICE_PER_M = 9
+# Pricing (USD per 1M tokens)
+GEMINI_COMPLEX_INPUT_PRICE_PER_M  = 1.5
+GEMINI_COMPLEX_OUTPUT_PRICE_PER_M = 9
+
+GEMINI_SIMPLE_INPUT_PRICE_PER_M  = 0.5
+GEMINI_SIMPLE_OUTPUT_PRICE_PER_M = 3
+
+# Legacy alias kept for any logging that still references it
+GEMINI_FLASH_INPUT_PRICE_PER_M  = GEMINI_COMPLEX_INPUT_PRICE_PER_M
+GEMINI_FLASH_OUTPUT_PRICE_PER_M = GEMINI_COMPLEX_OUTPUT_PRICE_PER_M
+
 
 _gemini_client: genai.Client | None = None
 
@@ -85,6 +96,17 @@ def _make_cache_key(user_message: str) -> str:
     return f"stp_chatbot:sql:{digest}"
 
 
+# Matches ISO date literals like '2026-05-27' or '2026-05-27T00:00:00' or '2026-05-27 17:00:00'
+# that appear inside SQL single-quoted strings — these are hardcoded and unsafe to cache.
+_ISO_DATE_RE = re.compile(
+    r"'\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?'"
+)
+
+
+def _sql_has_iso_literal(sql: str) -> bool:
+    return bool(_ISO_DATE_RE.search(sql))
+
+
 async def cache_get(user_message: str) -> dict | None:
     """Return cached {intent_json, sql_query} or None on miss/error."""
     client = get_redis_client()
@@ -103,7 +125,17 @@ async def cache_get(user_message: str) -> dict | None:
 
 
 async def cache_set(user_message: str, intent_json: dict, sql_query: str) -> None:
-    """Store {intent_json, sql_query} in Redis with TTL. Fails silently."""
+    """Store {intent_json, sql_query} in Redis with TTL. Fails silently.
+
+    Skips caching entirely if the SQL contains hardcoded ISO date literals —
+    those queries are time-frozen and would return stale data on a cache hit.
+    """
+    if _sql_has_iso_literal(sql_query):
+        print(
+            f"[Redis] Cache SKIP (ISO date literal detected — not safe to cache): "
+            f"{user_message[:60]}"
+        )
+        return
     client = get_redis_client()
     if client is None:
         print("[Redis] Client is None")
@@ -196,7 +228,7 @@ EXAMPLE_QUERIES_SQL = {
     "Show energy consumed by pump 2 today": """SELECT SUM("[PLC]P_DATA[39]") AS p2_energy_kwh FROM "ATL_MPS" WHERE DATE("DateAndTime") = CURRENT_DATE;""",
     "How many times did pump 1 start last week?": """WITH lagged AS ( SELECT "[PLC]P1.ONOFF" AS p1_onoff, LAG("[PLC]P1.ONOFF") OVER (ORDER BY "DateAndTime") AS prev_p1_onoff FROM "ATL_MPS" WHERE "DateAndTime" >= NOW() - INTERVAL '7 days' ) SELECT COUNT(*) AS p1_start_count FROM lagged WHERE p1_onoff = 1 AND prev_p1_onoff = 0;""",
     "Compare SEC of all pumps for May 2026": """WITH flow_diff AS ( SELECT "DateAndTime", "[PLC]P_DATA[18]" AS p1_kwh, "[PLC]P_DATA[39]" AS p2_kwh, "[PLC]P_DATA[60]" AS p3_kwh, "[PLC]P_DATA[81]" AS p4_kwh, "[PLC]P_DATA[102]" AS p5_kwh, "[PLC]P_DATA[123]" AS p6_kwh, CASE WHEN ("[PLC]FIT101_TOTAL.D_MLD" - LAG("[PLC]FIT101_TOTAL.D_MLD") OVER (ORDER BY "DateAndTime")) > 0 THEN ("[PLC]FIT101_TOTAL.D_MLD" - LAG("[PLC]FIT101_TOTAL.D_MLD") OVER (ORDER BY "DateAndTime")) * 60000 ELSE 0 END AS flow_volume_m3 FROM "ATL_MPS" WHERE "DateAndTime" >= '2026-05-01' AND "DateAndTime" < '2026-06-01' ), stats AS ( SELECT SUM(p1_kwh) AS p1_kwh_total, SUM(p2_kwh) AS p2_kwh_total, SUM(p3_kwh) AS p3_kwh_total, SUM(p4_kwh) AS p4_kwh_total, SUM(p5_kwh) AS p5_kwh_total, SUM(p6_kwh) AS p6_kwh_total, SUM(flow_volume_m3) AS flow_volume_m3_total FROM flow_diff ) SELECT CASE WHEN flow_volume_m3_total > 0 THEN p1_kwh_total / flow_volume_m3_total ELSE 0 END AS p1_sec, CASE WHEN flow_volume_m3_total > 0 THEN p2_kwh_total / flow_volume_m3_total ELSE 0 END AS p2_sec, CASE WHEN flow_volume_m3_total > 0 THEN p3_kwh_total / flow_volume_m3_total ELSE 0 END AS p3_sec, CASE WHEN flow_volume_m3_total > 0 THEN p4_kwh_total / flow_volume_m3_total ELSE 0 END AS p4_sec, CASE WHEN flow_volume_m3_total > 0 THEN p5_kwh_total / flow_volume_m3_total ELSE 0 END AS p5_sec, CASE WHEN flow_volume_m3_total > 0 THEN p6_kwh_total / flow_volume_m3_total ELSE 0 END AS p6_sec FROM stats;""",
-    "What is the wet well level now?": """SELECT "[PLC]HLT101.OUTPUT" AS wet_well_level_mm FROM "ATL_MPS" ORDER BY "DateAndTime" DESC LIMIT 1;""",
+    "What is the current wet well level?": """SELECT "[PLC]HLT101.OUTPUT" AS wet_well_level_mm FROM "ATL_MPS" ORDER BY "DateAndTime" DESC LIMIT 1;""",
     "Show runtime of all pumps yesterday": """SELECT SUM(CASE WHEN "[PLC]P1.ONOFF" = 1 THEN 1 ELSE 0 END) AS p1_runtime_mins, SUM(CASE WHEN "[PLC]P2.ONOFF" = 1 THEN 1 ELSE 0 END) AS p2_runtime_mins, SUM(CASE WHEN "[PLC]P3.ONOFF" = 1 THEN 1 ELSE 0 END) AS p3_runtime_mins, SUM(CASE WHEN "[PLC]P4.ONOFF" = 1 THEN 1 ELSE 0 END) AS p4_runtime_mins, SUM(CASE WHEN "[PLC]P5.ONOFF" = 1 THEN 1 ELSE 0 END) AS p5_runtime_mins, SUM(CASE WHEN "[PLC]P6.ONOFF" = 1 THEN 1 ELSE 0 END) AS p6_runtime_mins FROM "ATL_MPS" WHERE DATE("DateAndTime") = CURRENT_DATE - 1;""",
     "Power factor of pump 3 last 7 days": """SELECT AVG("[PLC]P_DATA[42]") / NULLIF(AVG("[PLC]P_DATA[50]"), 0) AS p3_power_factor FROM "ATL_MPS" WHERE "[PLC]P3.ONOFF" = 1 AND "DateAndTime" >= NOW() - INTERVAL '7 days';""",
     "How many pumps are running right now?": """SELECT ("[PLC]P1.ONOFF" + "[PLC]P2.ONOFF" + "[PLC]P3.ONOFF" + "[PLC]P4.ONOFF" + "[PLC]P5.ONOFF" + "[PLC]P6.ONOFF") AS running_pumps_count FROM "ATL_MPS" ORDER BY "DateAndTime" DESC LIMIT 1;"""
@@ -270,20 +302,23 @@ class IntentResponse(BaseModel):
     requires_lag: bool
     clarification_needed: bool
     clarification_reason: Optional[str]
+    sql_level: int = 1  # 1=trivial, 2=simple, 3=moderate, 4=complex
     raw_json: dict
 
 
 class TokenUsage(BaseModel):
-    # Intent tokens (Gemini Flash — billed)
+    # Intent tokens (Gemma — free)
     intent_prompt_tokens: int = 0
     intent_output_tokens: int = 0
     # SQL-generation tokens (Gemini Flash — billed)
     sql_prompt_tokens: int = 0
     sql_output_tokens: int = 0
+    sql_model_used: str = ""             # Which model was selected for SQL
+    sql_level: int = 1                   # SQL complexity level from intent (1-4)
     # Answer tokens (Gemma — free)
     answer_prompt_tokens: int = 0
     answer_output_tokens: int = 0
-    # Cost fields (intent + SQL steps)
+    # Cost fields (SQL step only)
     gemini_sql_input_cost_usd: float = 0.0
     gemini_sql_output_cost_usd: float = 0.0
     gemini_sql_total_cost_usd: float = 0.0
@@ -322,20 +357,36 @@ def _build_date_context() -> str:
     )
 
 
-# ---------- Gemini SDK call — Gemini 2.5 Flash (SQL only, billed) ----------
+# ---------- Gemini SDK call — Gemini Flash (SQL only, billed) ----------
 
 async def call_gemini_flash(
     system_prompt: str,
     messages: list,
     temperature: float = 0.1,
     label: str = "intent",
+    model: str | None = None,
 ) -> tuple[str, dict]:
-    """Call gemini-2.5-flash via Gemini SDK. Used for SQL generation only. Tracks cost."""
+    """Call a Gemini Flash model via Gemini SDK. Used for SQL generation only. Tracks cost.
+
+    Args:
+        model: Which Gemini model to use. Defaults to GEMINI_COMPLEX_SQL_MODEL if not given.
+               Pass GEMINI_SIMPLE_SQL_MODEL for level-1/2 queries.
+    """
     if not GEMINI_API_KEY:
         raise HTTPException(
             status_code=500,
             detail="GEMINI_API_KEY env var is not set. Check your .env file.",
         )
+
+    selected_model = model or GEMINI_COMPLEX_SQL_MODEL
+
+    # Choose pricing based on selected model
+    if selected_model == GEMINI_SIMPLE_SQL_MODEL:
+        input_price_per_m  = GEMINI_SIMPLE_INPUT_PRICE_PER_M
+        output_price_per_m = GEMINI_SIMPLE_OUTPUT_PRICE_PER_M
+    else:
+        input_price_per_m  = GEMINI_COMPLEX_INPUT_PRICE_PER_M
+        output_price_per_m = GEMINI_COMPLEX_OUTPUT_PRICE_PER_M
 
     dynamic_system_prompt = system_prompt + _build_date_context()
 
@@ -357,7 +408,7 @@ async def call_gemini_flash(
         client = get_gemini_client()
         for attempt in range(3):
             response = client.models.generate_content(
-                model=GEMINI_INTENT_SQL_MODEL, contents=contents, config=config,
+                model=selected_model, contents=contents, config=config,
             )
             text = response.text
             if text:
@@ -369,8 +420,8 @@ async def call_gemini_flash(
 
         prompt_tokens = getattr(response.usage_metadata, "prompt_token_count", 0)
         output_tokens = getattr(response.usage_metadata, "candidates_token_count", 0)
-        input_cost  = (prompt_tokens / 1_000_000) * GEMINI_FLASH_INPUT_PRICE_PER_M
-        output_cost = (output_tokens / 1_000_000) * GEMINI_FLASH_OUTPUT_PRICE_PER_M
+        input_cost  = (prompt_tokens / 1_000_000) * input_price_per_m
+        output_cost = (output_tokens / 1_000_000) * output_price_per_m
         total_cost  = input_cost + output_cost
 
         usage = {
@@ -380,9 +431,10 @@ async def call_gemini_flash(
             "inputCostUSD":         round(input_cost, 8),
             "outputCostUSD":        round(output_cost, 8),
             "totalCostUSD":         round(total_cost, 8),
+            "model":                selected_model,
         }
         print(
-            f"[Gemini/{GEMINI_INTENT_SQL_MODEL}] [{label}] tokens=({prompt_tokens}in/{output_tokens}out) "
+            f"[Gemini/{selected_model}] [{label}] tokens=({prompt_tokens}in/{output_tokens}out) "
             f"cost=${total_cost:.8f} USD"
         )
         return text, usage
@@ -497,16 +549,25 @@ async def parse_intent(request: QueryRequest):
         requires_lag=intent_data.get("requires_lag", False),
         clarification_needed=intent_data.get("clarification_needed", False),
         clarification_reason=intent_data.get("clarification_reason"),
+        sql_level=int(intent_data.get("sql_level", 1)),
         raw_json=intent_data,
     )
 
 
 @app.post("/generate-sql")
-async def generate_sql(intent: dict, intent_name: str = "", user_message: str = ""):
+async def generate_sql(
+    intent: dict,
+    intent_name: str = "",
+    user_message: str = "",
+    sql_model: str | None = None,
+):
     # Inject flow_analysis-specific trigger rules when applicable
     sql_prompt = SQL_SYSTEM_PROMPT
     if intent_name in ("flow_analysis", "sec_analysis") or intent.get("intent") in ("flow_analysis", "sec_analysis"):
         sql_prompt = SQL_SYSTEM_PROMPT + FLOW_ANALYSIS_SQL_ADDENDUM
+
+    # Default to complex model if not specified
+    effective_model = sql_model or GEMINI_COMPLEX_SQL_MODEL
 
     # Include the original user question so trigger rules can match on its text
     user_question_context = (
@@ -522,8 +583,10 @@ async def generate_sql(intent: dict, intent_name: str = "", user_message: str = 
             ),
         }
     ]
-    # SQL generation → Gemini Flash (billed, cost tracked)
-    sql, usage = await call_gemini_flash(sql_prompt, messages, label="sql")
+    # SQL generation → selected Gemini Flash model (billed, cost tracked)
+    sql, usage = await call_gemini_flash(
+        sql_prompt, messages, label="sql", model=effective_model
+    )
 
     if not sql:
         raise HTTPException(
@@ -561,9 +624,11 @@ async def full_pipeline(request: QueryRequest):
     user_msg_stripped = request.user_message.strip()
     intent_usage: dict = {}
     sql_usage: dict = {}
+    pipeline_path: str = "llm"  # 'example' | 'cached' | 'llm'
 
     # ── Check for Example Queries ──────────────────────────────
     if user_msg_stripped in EXAMPLE_QUERIES_SQL:
+        pipeline_path = "example"
         # Bypass intent parsing and SQL generation for known examples
         generated_sql = EXAMPLE_QUERIES_SQL[user_msg_stripped]
         intent_raw = {
@@ -575,13 +640,15 @@ async def full_pipeline(request: QueryRequest):
             "limit": None,
             "requires_lag": False,
             "clarification_needed": False,
-            "clarification_reason": None
+            "clarification_reason": None,
+            "sql_level": 0,  # 0 = no LLM used (hardcoded example)
         }
 
     else:
         # ── Redis Cache Check (skip LLM if SQL already known) ──────
         cached = await cache_get(user_msg_stripped)
         if cached:
+            pipeline_path = "cached"
             # Cache hit: reuse SQL structure, DB will still run fresh below
             intent_raw    = cached["intent_json"]
             generated_sql = cached["sql_query"]
@@ -659,10 +726,19 @@ async def full_pipeline(request: QueryRequest):
                 )
 
             # ── Step 2: Generate SQL ───────────────────────────────────
+            sql_level = intent_resp.sql_level
+            if sql_level > 3:
+                sql_model = GEMINI_COMPLEX_SQL_MODEL
+            else:
+                sql_model = GEMINI_SIMPLE_SQL_MODEL
+
+            print(f"[SQL Model] sql_level={sql_level} → using model: {sql_model}")
+
             sql_resp = await generate_sql(
                 intent_raw,
                 intent_name=intent_resp.intent,
                 user_message=request.user_message,
+                sql_model=sql_model,
             )
             sql_usage = sql_resp.get("usage", {})
             generated_sql = sql_resp["sql"]
@@ -766,10 +842,9 @@ async def full_pipeline(request: QueryRequest):
         final_answer = f"(Could not generate answer: {exc.detail})"
 
     # ── Accumulate tokens & compute cost ──────────────────────
-    # Intent = Gemma (free), SQL = Gemini 2.5 Flash (billed), Answer = Gemma (free)
+    # Intent = Gemma (free), SQL = Gemini Flash (billed — model chosen by sql_level), Answer = Gemma (free)
     intent_in_tokens  = intent_usage.get("promptTokenCount", 0)
     intent_out_tokens = intent_usage.get("candidatesTokenCount", 0)
-    # Intent is Gemma — no cost
 
     sql_input_tokens  = sql_usage.get("promptTokenCount", 0)
     sql_output_tokens = sql_usage.get("candidatesTokenCount", 0)
@@ -777,19 +852,34 @@ async def full_pipeline(request: QueryRequest):
     sql_output_cost   = sql_usage.get("outputCostUSD", 0.0)
     sql_total_cost    = sql_usage.get("totalCostUSD", 0.0)
 
+    # Determine sql_model_used and sql_level based on which path ran:
+    #   'example'  → hardcoded SQL, no LLM called at all
+    #   'cached'   → SQL came from Redis cache, no LLM called this request
+    #   'llm'      → LLM was called; use model/level from actual usage
+    if pipeline_path == "example":
+        sql_model_used = "example"
+        sql_level_used = 0  # no SQL complexity — hardcoded
+    elif pipeline_path == "cached":
+        sql_model_used = "cached"
+        sql_level_used = intent_raw.get("sql_level", 0)
+    else:  # 'llm'
+        sql_model_used = sql_usage.get("model", "")
+        sql_level_used = intent_raw.get("sql_level", 1)
+
     answer_in_tokens  = answer_usage.get("promptTokenCount", 0)
     answer_out_tokens = answer_usage.get("candidatesTokenCount", 0)
-    # Answer is Gemma — no cost
 
-    total_flash_cost = sql_total_cost  # Only SQL step is billed (Gemini 2.5 Flash)
+    total_flash_cost = sql_total_cost  # Only SQL step is billed
 
     combined_usage = TokenUsage(
         # Intent (Gemma 4 31B — free)
         intent_prompt_tokens=intent_in_tokens,
         intent_output_tokens=intent_out_tokens,
-        # SQL (Gemini 2.5 Flash — billed)
+        # SQL (Gemini Flash — billed, model depends on sql_level)
         sql_prompt_tokens=sql_input_tokens,
         sql_output_tokens=sql_output_tokens,
+        sql_model_used=sql_model_used,
+        sql_level=sql_level_used,
         # Answer (Gemma 4 31B — free)
         answer_prompt_tokens=answer_in_tokens,
         answer_output_tokens=answer_out_tokens,
@@ -800,9 +890,9 @@ async def full_pipeline(request: QueryRequest):
     )
 
     print(
-        f"[Cost Summary] Gemini 2.5 Flash (SQL only): ${total_flash_cost:.8f} USD "
-        f"(sql: {sql_input_tokens}in/{sql_output_tokens}out @ "
-        f"${GEMINI_FLASH_INPUT_PRICE_PER_M}/${GEMINI_FLASH_OUTPUT_PRICE_PER_M} per 1M) | "
+        f"[Cost Summary] sql_level={sql_level_used} model={sql_model_used} "
+        f"SQL cost=${total_flash_cost:.8f} USD "
+        f"(sql: {sql_input_tokens}in/{sql_output_tokens}out) | "
         f"Gemma 4 31B (free) — intent: {intent_in_tokens}in/{intent_out_tokens}out, "
         f"answer: {answer_in_tokens}in/{answer_out_tokens}out"
     )

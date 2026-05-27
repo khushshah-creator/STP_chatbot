@@ -2,7 +2,10 @@
 
 const MAX_HISTORY = 6;
 let history = [];
-let sessionTotals = { gemmaIn: 0, gemmaOut: 0, flashIn: 0, flashOut: 0, flashCost: 0 };
+let sessionTotals = {
+    gemmaIn: 0, gemmaOut: 0,
+    flashIn: 0, flashOut: 0, flashCost: 0,
+};
 
 // ── Session / Conversation ID ────────────────────────────────
 function generateId() {
@@ -49,6 +52,13 @@ const lastGemmaOut = document.getElementById("lastGemmaOut");
 const lastFlashIn = document.getElementById("lastFlashIn");
 const lastFlashOut = document.getElementById("lastFlashOut");
 const lastCost = document.getElementById("lastCost");
+// Dynamic SQL model elements
+const sqlModelHeader = document.getElementById("sqlModelHeader");
+const sqlLevelBadge = document.getElementById("sqlLevelBadge");
+const sqlPricingLabel = document.getElementById("sqlPricingLabel");
+const lastSqlModel = document.getElementById("lastSqlModel");
+const lastSqlLevel = document.getElementById("lastSqlLevel");
+const lastCostBreakdown = document.getElementById("lastCostBreakdown");
 const intentPanel = document.getElementById("intentPanel");
 const sqlPanel = document.getElementById("sqlPanel");
 
@@ -58,7 +68,7 @@ const examples = [
     "Show energy consumed by pump 2 today",
     "How many times did pump 1 start last week?",
     "Compare SEC of all pumps for May 2026",
-    "What is the wet well level now?",
+    "What is the current wet well level?",
     "Show runtime of all pumps yesterday",
     "Power factor of pump 3 last 7 days",
     "How many pumps are running right now?"
@@ -79,7 +89,10 @@ newChatBtn.onclick = () => {
     viewingSessionId = SESSION_ID;
     history = [];
     messagesInner.innerHTML = "";
-    sessionTotals = { gemmaIn: 0, gemmaOut: 0, flashIn: 0, flashOut: 0, flashCost: 0 };
+    sessionTotals = {
+        gemmaIn: 0, gemmaOut: 0,
+        flashIn: 0, flashOut: 0, flashCost: 0,
+    };
     updateTokenUI();
     setViewingMode(false);
     chatTitle.textContent = "New Chat";
@@ -155,8 +168,7 @@ async function sendMessage() {
     appendUserBubble(text);
     userInput.value = "";
 
-    // Update title to first question
-    if (history.length === 0) chatTitle.textContent = text;
+    // Title stays fixed as "STP Monitor Chatbot"
 
     const mode = getPipelineMode();
     const url = apiUrlInput.value.replace(/\/$/, "");
@@ -175,15 +187,18 @@ async function sendMessage() {
         // Token tracking
         if (mode === "intent_only") {
             const raw = data.raw_json?._usage || {};
-            updateTokens(raw.promptTokenCount || 0, raw.candidatesTokenCount || 0, 0, 0, 0);
+            updateTokens({
+                intent_prompt_tokens: raw.promptTokenCount || 0,
+                intent_output_tokens: raw.candidatesTokenCount || 0,
+                sql_prompt_tokens: 0, sql_output_tokens: 0,
+                gemini_sql_total_cost_usd: 0,
+                gemini_sql_input_cost_usd: 0,
+                gemini_sql_output_cost_usd: 0,
+                answer_prompt_tokens: 0, answer_output_tokens: 0,
+                sql_model_used: "", sql_level: 0,
+            });
         } else {
-            const tu = data.token_usage || {};
-            updateTokens(
-                (tu.intent_prompt_tokens || 0) + (tu.answer_prompt_tokens || 0),
-                (tu.intent_output_tokens || 0) + (tu.answer_output_tokens || 0),
-                tu.sql_prompt_tokens || 0, tu.sql_output_tokens || 0,
-                tu.gemini_sql_total_cost_usd || 0
-            );
+            updateTokens(data.token_usage || {});
         }
 
         let assistantText = "";
@@ -208,7 +223,7 @@ async function sendMessage() {
                 assistantText = data.clarification_message || "";
                 intentStr = data.intent_json?.intent || "";
             } else {
-                updateBotBubble(loaderId, data.final_answer || "✅ SQL query generated.", data.intent_json?.intent, false, [], "", data.follow_up_questions || []);
+                updateBotBubble(loaderId, data.final_answer || "✅ SQL query generated.", data.intent_json?.intent, false, [], "", data.follow_up_questions || [], data.is_example_query || false);
                 renderIntentPanel(data.intent_json);
                 renderSqlPanel(data);
                 assistantText = data.final_answer || "✅ SQL query generated.";
@@ -231,7 +246,7 @@ function appendUserBubble(text) {
     div.className = "user-bubble";
     const timeDiv = document.createElement("div");
     timeDiv.style.cssText = "font-size:0.75rem;opacity:0.7;margin-bottom:4px;";
-    timeDiv.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    timeDiv.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
     const textDiv = document.createElement("div");
     textDiv.textContent = text;
     div.appendChild(timeDiv);
@@ -261,7 +276,7 @@ function appendThinkingBubble() {
     return id;
 }
 
-function updateBotBubble(id, content, intent = null, isClarify = false, clarifyOptions = [], originalQuery = "", followUps = []) {
+function updateBotBubble(id, content, intent = null, isClarify = false, clarifyOptions = [], originalQuery = "", followUps = [], isLatex = false) {
     const div = document.getElementById(id);
     if (!div) return;
     if (div._thinkingInterval) clearInterval(div._thinkingInterval);
@@ -272,11 +287,13 @@ function updateBotBubble(id, content, intent = null, isClarify = false, clarifyO
         if (clarifyOptions.length > 0) {
             html += `<div class="clarify-options"><span class="clarify-options-label">Quick select</span><div class="clarify-chips-row">`;
             clarifyOptions.forEach(opt => {
-                html += `<button class="clarify-option-btn" data-opt="${opt}" onclick="handleClarifyOption('${opt.replace(/'/g, "\\'")}','${originalQuery.replace(/'/g, "\\'")}'">${iconMap[opt] || '🕒'} ${opt}</button>`;
+                html += `<button class="clarify-option-btn" data-opt="${opt}" onclick="handleClarifyOption('${opt.replace(/'/g, "\\'")}',' ${originalQuery.replace(/'/g, "\\'")}')">${iconMap[opt] || '🕒'} ${opt}</button>`;
             });
             html += `</div></div>`;
         }
         div.innerHTML = html;
+    } else if (isLatex) {
+        renderLatexContent(div, content, intent, followUps);
     } else {
         div.innerHTML = formatBotContent(content, intent);
         if (followUps.length > 0) {
@@ -294,6 +311,53 @@ function updateBotBubble(id, content, intent = null, isClarify = false, clarifyO
     }
     scrollToBottom();
 }
+
+/** Render final answer using KaTeX for LaTeX math typesetting (example queries only). */
+function renderLatexContent(div, content, intent, followUps = []) {
+    let html = "";
+    if (intent && intent !== "error") html += `<div class="intent-badge">�� ${intent}</div>`;
+    html += `<div class="latex-answer">${renderMarkdown(content)}</div>`;
+    div.innerHTML = html;
+
+    const tryRender = () => {
+        const container = div.querySelector(".latex-answer");
+        if (!container) return;
+        if (typeof renderMathInElement === "function") {
+            renderMathInElement(container, {
+                delimiters: [
+                    { left: "\\[", right: "\\]", display: true },
+                    { left: "\\(", right: "\\)", display: false },
+                    { left: "$$", right: "$$", display: true },
+                    { left: "$", right: "$", display: false }
+                ],
+                throwOnError: false
+            });
+        }
+    };
+
+    if (window._katexReady) {
+        tryRender();
+    } else {
+        const poll = setInterval(() => {
+            if (window._katexReady) { clearInterval(poll); tryRender(); }
+        }, 100);
+    }
+
+    if (followUps && followUps.length > 0) {
+        const row = document.createElement("div");
+        row.className = "followup-chips-row";
+        followUps.forEach(q => {
+            const btn = document.createElement("button");
+            btn.className = "followup-chip";
+            btn.textContent = q;
+            btn.onclick = () => { userInput.value = q; sendMessage(); };
+            row.appendChild(btn);
+        });
+        div.appendChild(row);
+    }
+    scrollToBottom();
+}
+
 
 function handleClarifyOption(option, originalQuery) {
     userInput.value = `${originalQuery} ${option}`;
@@ -326,6 +390,13 @@ function renderIntentPanel(intent) {
     if (intent.clarification_needed) html += `<span class="pill-off">Needs Clarify</span>`;
     if (intent.limit) html += `<span class="pill-on">LIMIT ${intent.limit}</span>`;
     if (intent.group_by) html += `<span class="pill-on">GROUP BY</span>`;
+    // sql_level badge
+    if (intent.sql_level) {
+        const lvlColors = { 1: "#4caf50", 2: "#2196f3", 3: "#ff9800", 4: "#f44336" };
+        const lvlLabels = { 1: "L1 Trivial", 2: "L2 Simple", 3: "L3 Moderate", 4: "L4 Complex" };
+        const c = lvlColors[intent.sql_level] || "var(--accent-blue)";
+        html += `<span style="border:1px solid ${c};color:${c};border-radius:6px;padding:1px 7px;font-size:0.72rem;font-weight:600;">${lvlLabels[intent.sql_level] || "L" + intent.sql_level}</span>`;
+    }
     html += `</div><div class="intent-details">`;
     const tr = intent.time_range || {};
     if (tr.type !== "none") html += `<div>🕐 <b>Time Range:</b> ${tr.relative || (tr.start + " → " + tr.end)}</div>`;
@@ -350,11 +421,34 @@ function renderSqlPanel(data) {
     sqlPanel.innerHTML = html;
 }
 
-function updateTokens(g_in, g_out, f_in, f_out, f_cost) {
-    sessionTotals.gemmaIn += g_in; sessionTotals.gemmaOut += g_out;
-    sessionTotals.flashIn += f_in; sessionTotals.flashOut += f_out;
+/**
+ * Update the token/cost panel with the full token_usage object from the API.
+ * Expects fields: intent_prompt_tokens, intent_output_tokens,
+ *   answer_prompt_tokens, answer_output_tokens,
+ *   sql_prompt_tokens, sql_output_tokens,
+ *   gemini_sql_input_cost_usd, gemini_sql_output_cost_usd, gemini_sql_total_cost_usd,
+ *   sql_model_used, sql_level
+ */
+function updateTokens(tu) {
+    const g_in = (tu.intent_prompt_tokens || 0) + (tu.answer_prompt_tokens || 0);
+    const g_out = (tu.intent_output_tokens || 0) + (tu.answer_output_tokens || 0);
+    const f_in = tu.sql_prompt_tokens || 0;
+    const f_out = tu.sql_output_tokens || 0;
+    const f_cost = tu.gemini_sql_total_cost_usd || 0;
+    const f_in_cost = tu.gemini_sql_input_cost_usd || 0;
+    const f_out_cost = tu.gemini_sql_output_cost_usd || 0;
+    const model = tu.sql_model_used || "";
+    const level = tu.sql_level || 0;
+
+    sessionTotals.gemmaIn += g_in;
+    sessionTotals.gemmaOut += g_out;
+    sessionTotals.flashIn += f_in;
+    sessionTotals.flashOut += f_out;
     sessionTotals.flashCost += f_cost;
-    const allTok = sessionTotals.gemmaIn + sessionTotals.gemmaOut + sessionTotals.flashIn + sessionTotals.flashOut;
+
+    const allTok = sessionTotals.gemmaIn + sessionTotals.gemmaOut
+        + sessionTotals.flashIn + sessionTotals.flashOut;
+
     gemmaIn.textContent = sessionTotals.gemmaIn.toLocaleString();
     gemmaOut.textContent = sessionTotals.gemmaOut.toLocaleString();
     gemmaTok.textContent = (sessionTotals.gemmaIn + sessionTotals.gemmaOut).toLocaleString();
@@ -364,21 +458,119 @@ function updateTokens(g_in, g_out, f_in, f_out, f_cost) {
     flashCost.textContent = "$" + sessionTotals.flashCost.toFixed(6);
     totTok.textContent = allTok.toLocaleString();
     totCost.textContent = "$" + sessionTotals.flashCost.toFixed(6);
+
+    // ── Update SQL model section header & meta dynamically ──
+    const isExample = model === "example";
+    const isCached = model === "cached";
+    const isLlm = !isExample && !isCached && model !== "";
+
+    if (sqlModelHeader) {
+        if (isExample) {
+            sqlModelHeader.innerHTML = `📦 Hardcoded Example · SQL Gen <span style="font-size:0.7em;opacity:0.7;">(no cost)</span>`;
+            sqlModelHeader.style.color = "var(--text-muted, #888)";
+        } else if (isCached) {
+            sqlModelHeader.innerHTML = `🗄️ Redis Cached · SQL Gen <span style="font-size:0.7em;opacity:0.7;">(no cost)</span>`;
+            sqlModelHeader.style.color = "var(--accent-blue)";
+        } else if (isLlm) {
+            const displayName = model.replace(/-preview-[\d-]+$/, "");
+            sqlModelHeader.innerHTML = `⚡ ${displayName} · SQL Gen <span style="font-size:0.7em;opacity:0.7;">(billed)</span>`;
+            sqlModelHeader.style.color = "var(--accent-green)";
+        }
+    }
+    if (sqlLevelBadge) {
+        const levelColors = { 1: "#4caf50", 2: "#2196f3", 3: "#ff9800", 4: "#f44336" };
+        const levelLabels = { 1: "L1 Trivial", 2: "L2 Simple", 3: "L3 Moderate", 4: "L4 Complex" };
+        if (level === 0 || isExample) {
+            sqlLevelBadge.textContent = "📦 Example";
+            sqlLevelBadge.style.cssText = "color:#888;border:1px solid #555;border-radius:4px;padding:1px 6px;";
+        } else if (isCached) {
+            const c = levelColors[level] || "#888";
+            const lbl = levelLabels[level] ? `🗄️ ${levelLabels[level]}` : "🗄️ Cached";
+            sqlLevelBadge.textContent = lbl;
+            sqlLevelBadge.style.cssText = `color:${c};border:1px solid ${c};border-radius:4px;padding:1px 6px;`;
+        } else {
+            const color = levelColors[level] || "inherit";
+            sqlLevelBadge.textContent = levelLabels[level] || `Level ${level}`;
+            sqlLevelBadge.style.color = color;
+            sqlLevelBadge.style.borderColor = color;
+            sqlLevelBadge.style.border = `1px solid ${color}`;
+        }
+    }
+    if (sqlPricingLabel) {
+        if (isExample || isCached) {
+            sqlPricingLabel.textContent = isExample ? "No LLM call" : "From cache";
+        } else {
+            let inPrice = "?", outPrice = "?";
+            if (f_in > 0 && f_in_cost > 0) inPrice = "$" + ((f_in_cost / f_in) * 1_000_000).toFixed(2);
+            if (f_out > 0 && f_out_cost > 0) outPrice = "$" + ((f_out_cost / f_out) * 1_000_000).toFixed(2);
+            if (inPrice !== "?" || outPrice !== "?") {
+                sqlPricingLabel.textContent = `In: ${inPrice}/1M · Out: ${outPrice}/1M`;
+            }
+        }
+    }
+
+    // ── Last Request panel ──
     if (g_in > 0 || g_out > 0 || f_in > 0 || f_out > 0) {
         lastRequestPanel.style.display = "block";
         lastGemmaIn.textContent = g_in.toLocaleString();
         lastGemmaOut.textContent = g_out.toLocaleString();
         lastFlashIn.textContent = f_in.toLocaleString();
         lastFlashOut.textContent = f_out.toLocaleString();
-        lastCost.textContent = "$" + f_cost.toFixed(6);
+        lastCost.textContent = "$" + f_cost.toFixed(8);
+
+        // Model name + level badges in Last Request
+        if (lastSqlModel) {
+            if (isExample) lastSqlModel.textContent = "📦 Example";
+            else if (isCached) lastSqlModel.textContent = "🗄️ Cached";
+            else if (isLlm) lastSqlModel.textContent = model.replace(/-preview-[\d-]+$/, "");
+        }
+        if (lastSqlLevel) {
+            const levelLabels = { 1: "L1 Trivial", 2: "L2 Simple", 3: "L3 Moderate", 4: "L4 Complex" };
+            const levelColors = { 1: "#4caf50", 2: "#2196f3", 3: "#ff9800", 4: "#f44336" };
+            if (level === 0 || isExample) {
+                lastSqlLevel.textContent = "📦 No LLM";
+                lastSqlLevel.style.cssText = "color:#888;border:1px solid #555;border-radius:4px;padding:1px 6px;";
+            } else if (isCached) {
+                const c = levelColors[level] || "#888";
+                lastSqlLevel.textContent = levelLabels[level] ? `🗄️ ${levelLabels[level]}` : "🗄️ Cached";
+                lastSqlLevel.style.cssText = `color:${c};border:1px solid ${c};border-radius:4px;padding:1px 6px;`;
+            } else {
+                const lc = levelColors[level] || "inherit";
+                lastSqlLevel.textContent = levelLabels[level] || `Level ${level}`;
+                lastSqlLevel.style.color = lc;
+                lastSqlLevel.style.border = `1px solid ${lc}`;
+            }
+        }
+
+        // Cost breakdown line: in_cost + out_cost shown in µUSD (millionths)
+        if (lastCostBreakdown) {
+            if (f_in > 0 || f_out > 0) {
+                const inUsd = f_in_cost.toFixed(8);
+                const outUsd = f_out_cost.toFixed(8);
+                lastCostBreakdown.innerHTML =
+                    `In: $${inUsd} &nbsp;|&nbsp; Out: $${outUsd}`;
+            } else {
+                lastCostBreakdown.textContent = "";
+            }
+        }
     }
 }
 
 function updateTokenUI() {
-    sessionTotals = { gemmaIn: 0, gemmaOut: 0, flashIn: 0, flashOut: 0, flashCost: 0 };
+    sessionTotals = {
+        gemmaIn: 0, gemmaOut: 0,
+        flashIn: 0, flashOut: 0, flashCost: 0,
+    };
     [gemmaIn, gemmaOut, gemmaTok, flashIn, flashOut, flashTok, totTok].forEach(el => el.textContent = "0");
     flashCost.textContent = totCost.textContent = "$0.000000";
     lastRequestPanel.style.display = "none";
+    // Reset dynamic SQL model display
+    if (sqlModelHeader) sqlModelHeader.innerHTML = `⚡ SQL Model · SQL Gen <span style="font-size:0.7em;opacity:0.7;">(billed)</span>`;
+    if (sqlLevelBadge) { sqlLevelBadge.textContent = "Level —"; sqlLevelBadge.style.cssText = ""; }
+    if (sqlPricingLabel) sqlPricingLabel.textContent = "—";
+    if (lastCostBreakdown) lastCostBreakdown.textContent = "";
+    if (lastSqlModel) lastSqlModel.textContent = "—";
+    if (lastSqlLevel) { lastSqlLevel.textContent = "Level —"; lastSqlLevel.style.cssText = ""; }
 }
 
 // ── Conversations Sidebar ────────────────────────────────────
