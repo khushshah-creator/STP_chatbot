@@ -1,0 +1,38 @@
+# Python virtual environments (both root and subfolders)
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache directories
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment variables & sensitive config files (including those in subfolders)
+.env
+.env.*
+*.env
+*.local
+
+# IDEs & Editor configurations
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Operating System files
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+
+# Project-specific scratch/temp files
+scratch.py
+app.py
+
+conversation_history.json

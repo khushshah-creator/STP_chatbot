@@ -17,11 +17,12 @@ Return ONLY valid raw JSON. No explanation. No markdown. No extra text.
     "raw": string | null         // Original time expression from user
   },
   "aggregation": string,         // "sum" | "avg" | "max" | "min" | "delta" | "latest" | "trend"
-  "limit": int | null,           // 1 for latest/current, 5 for recent, 10 for trend, null for aggregates
+  "limit": int | null,           // 1 for latest/current, 5 for recent, null for aggregates
   "requires_lag": bool,          // true if flow volume or pump start count needed (uses LAG)
   "group_by": string | null,     // "pump" | "hour" | "day" | "none"
   "clarification_needed": bool,  // true if time range is missing for analytical queries
-  "clarification_reason": string | null  // Human-readable message to show user if clarification needed
+  "clarification_reason": string | null,  // Human-readable message to show user if clarification needed
+  "sql_level": int               // Complexity level of the SQL query needed: 1 | 2 | 3 | 4 (see SQL LEVEL GUIDE below)
 }
 
 ## INTENT CATEGORIES
@@ -73,6 +74,36 @@ Use exactly one of:
 9. Date parsing: convert relative dates to relative field; absolute dates to start/end ISO strings
 10. If the message is a greeting, salutation, or social phrase (hi, hello, hey, good morning, thanks, bye, how are you, what's up, etc.) → set intent="greeting", all other fields empty/default.
 11. If the message is completely unrelated to STP / sewage treatment plant monitoring (e.g. weather forecast, sports, cooking, programming help, general knowledge) → set intent="out_of_scope", all other fields empty/default.
+12. Always set the sql_level field according to the SQL LEVEL GUIDE below.
+
+## SQL LEVEL GUIDE
+
+Assign sql_level based on the complexity of the SQL query that will be needed to answer this question:
+
+**Level 1 — Trivial (single row lookup, no aggregation, no time filter)**
+  Examples: current value of any sensor, latest reading, how many pumps ON right now.
+  Signals: intent is "current_status" or "wet_well_level", aggregation="latest", limit=1, time_range.type="none", requires_lag=false, group_by=null.
+
+**Level 2 — Simple aggregation (one metric, one time range, no LAG, no CTE)**
+  Examples: total energy of pump 2 today, average voltage of pump 3 last 7 days, runtime of all pumps yesterday.
+  Signals: single aggregation (SUM/AVG/MAX/MIN), one time range, no requires_lag, no group_by="hour" or "day", no multi-metric comparison.
+
+**Level 3 — Moderate complexity (multi-metric or GROUP BY or multi-pump comparison, no LAG)**
+  Examples: compare energy of all pumps last month, energy per pump grouped by day, power factor per pump last week, flow trend per hour.
+  Signals: group_by is "pump" or "day" or "hour", multiple pumps/metrics being compared, multi-column aggregation, but requires_lag=false.
+
+**Level 4 — High complexity (LAG window function, multi-CTE, flow delta, SEC, pump concurrency, per-pump flow division)**
+  Examples: how many times did pump 1 start (LAG), total flow volume over a period (MLD delta with LAG), SEC calculation, per-pump flow analysis, multi-pump concurrency analysis.
+  Signals: requires_lag=true, OR intent is "sec_analysis" or "multi_pump_concurrency" or "pump_start_count" or "flow_analysis" with delta/volume semantics.
+
+**IMPORTANT RULES for sql_level:**
+- For intent="greeting" or intent="out_of_scope" or intent="unknown" → sql_level=1 (no SQL needed, trivially cheap).
+- For intent="current_status" or intent="wet_well_level" with aggregation="latest" and limit=1 → sql_level=1.
+- For requires_lag=true → sql_level MUST be 4.
+- For intent="sec_analysis" → sql_level MUST be 4.
+- For intent="multi_pump_concurrency" → sql_level MUST be 4.
+- For intent="pump_performance" with multiple pumps and group_by → sql_level=3.
+- When in doubt between two adjacent levels, choose the higher one.
 
 ## EXAMPLES
 
@@ -87,7 +118,8 @@ User: "What is the current flow?"
   "requires_lag": false,
   "group_by": null,
   "clarification_needed": false,
-  "clarification_reason": null
+  "clarification_reason": null,
+  "sql_level": 1
 }
 
 User: "Show energy consumed by pump 2 and pump 3 last week"
@@ -101,7 +133,8 @@ User: "Show energy consumed by pump 2 and pump 3 last week"
   "requires_lag": false,
   "group_by": "pump",
   "clarification_needed": false,
-  "clarification_reason": null
+  "clarification_reason": null,
+  "sql_level": 3
 }
 
 User: "How many times did pump 1 start?"
@@ -115,7 +148,53 @@ User: "How many times did pump 1 start?"
   "requires_lag": true,
   "group_by": null,
   "clarification_needed": true,
-  "clarification_reason": "For what time range do you want to check this? (e.g., today, last 7 days, specific date)"
+  "clarification_reason": "For what time range do you want to check this? (e.g., today, last 7 days, specific date)",
+  "sql_level": 4
+}
+
+User: "Total flow volume last month"
+{
+  "intent": "flow_analysis",
+  "pumps": [],
+  "metrics": ["flow_mld"],
+  "time_range": {"type": "relative", "start": null, "end": null, "relative": "last_month", "raw": "last month"},
+  "aggregation": "delta",
+  "limit": null,
+  "requires_lag": true,
+  "group_by": null,
+  "clarification_needed": false,
+  "clarification_reason": null,
+  "sql_level": 4
+}
+
+User: "Show energy consumed by all pumps today"
+{
+  "intent": "energy_analysis",
+  "pumps": [],
+  "metrics": ["p1_kwh", "p2_kwh", "p3_kwh", "p4_kwh", "p5_kwh", "p6_kwh"],
+  "time_range": {"type": "relative", "start": null, "end": null, "relative": "today", "raw": "today"},
+  "aggregation": "sum",
+  "limit": null,
+  "requires_lag": false,
+  "group_by": "pump",
+  "clarification_needed": false,
+  "clarification_reason": null,
+  "sql_level": 3
+}
+
+User: "Average voltage of pump 3 last 7 days"
+{
+  "intent": "voltage_analysis",
+  "pumps": [3],
+  "metrics": ["p3_voltage"],
+  "time_range": {"type": "relative", "start": null, "end": null, "relative": "last_7_days", "raw": "last 7 days"},
+  "aggregation": "avg",
+  "limit": null,
+  "requires_lag": false,
+  "group_by": null,
+  "clarification_needed": false,
+  "clarification_reason": null,
+  "sql_level": 2
 }
 
 User: "Hello!"
@@ -129,7 +208,8 @@ User: "Hello!"
   "requires_lag": false,
   "group_by": null,
   "clarification_needed": false,
-  "clarification_reason": null
+  "clarification_reason": null,
+  "sql_level": 1
 }
 
 User: "What is the capital of France?"
@@ -143,7 +223,8 @@ User: "What is the capital of France?"
   "requires_lag": false,
   "group_by": null,
   "clarification_needed": false,
-  "clarification_reason": null
+  "clarification_reason": null,
+  "sql_level": 1
 }
 """
 
@@ -295,17 +376,34 @@ You will receive:
 2. The SQL query that was executed
 3. The raw database results (JSON rows)
 
-Your job is to produce a clear, concise, human-readable answer to the user's question based on the data.
+Your job is to produce a JSON object with exactly two keys:
 
-## GUIDELINES
+{
+  "answer": "<your human-readable answer here>",
+  "follow_ups": ["<question 1>", "<question 2>", "<question 3>"]
+}
+
+## ANSWER GUIDELINES
 
 - Be direct: lead with the key number/fact, then add context.
 - Use appropriate units (kWh, m³/hr, mm, amps, volts, etc.).
-- If multiple pumps or days are present, summarise meaningfully (e.g. a small table or bullet list).
+- If multiple pumps or days are present, summarise meaningfully (e.g. a small table or bullet list using markdown).
 - Round large floats to 2 decimal places unless more precision is needed.
 - If the result set is empty, say "No data found for the requested period" and suggest the user try a broader time range.
 - If a DB error was reported, explain what went wrong in plain language and suggest how to rephrase the question.
 - Never mention SQL, database, tables, column names, or internal implementation details to the user.
 - Keep the tone professional but friendly.
 - Do NOT repeat the question back to the user — just answer it.
+
+## FOLLOW-UP QUESTION GUIDELINES
+
+- Generate exactly 3 short, specific follow-up questions the user might naturally ask NEXT based on their current query.
+- Questions must be relevant to STP monitoring (pumps, energy, flow, wet well level, SEC, power factor, etc.).
+- Vary the questions — e.g. a different time range, a related metric, or a comparison angle.
+- Keep each question under 60 characters.
+- Do NOT prefix with numbers or bullets — just the question text.
+
+## OUTPUT FORMAT
+
+Return ONLY valid raw JSON. No markdown fences. No explanation. No extra text. Just the JSON object.
 """
